@@ -1,0 +1,13 @@
+# ip demo.
+import "./main.ecko"
+ip = main
+
+for addr in ["192.168.1.10", "8.8.8.8", "2001:db8::1", "::1"] {
+    p = ip.parse(addr)
+    print("{addr}: v{p.version} private={p.is_private}")
+}
+
+member = ip.in_network("10.5.5.5", "10.0.0.0/8")
+print("10.5.5.5 in 10.0.0.0/8? {member}")
+outside = ip.in_network("2001:db9::1", "2001:db8::/32")
+print("2001:db9::1 in 2001:db8::/32? {outside}")

@@ -1,0 +1,55 @@
+# Tests for the ip package - offline, deterministic.
+import std.test
+import "../main.ecko"
+ip = main
+
+test.case("parse and validate IPv4", || {
+    p = ip.parse("192.168.1.5")
+    test.eq(p.version, 4)
+    test.eq(p.groups, [192, 168, 1, 5])
+    test.ok(ip.is_valid("10.0.0.1"), "valid")
+    test.ok(not ip.is_valid("256.1.1.1"), "octet > 255")
+    test.ok(not ip.is_valid("1.2.3"), "too few octets")
+    test.ok(not ip.is_valid("1.2.3.4.5"), "too many octets")
+    test.ok(not ip.is_valid("1.2.3.x"), "non-numeric octet")
+})
+
+test.case("version detection", || {
+    test.eq(ip.version("8.8.8.8"), 4)
+    test.eq(ip.version("2001:db8::1"), 6)
+})
+
+test.case("parse and validate IPv6, including :: compression", || {
+    test.ok(ip.is_valid("::1"), "loopback")
+    test.ok(ip.is_valid("fe80::1"), "link-local")
+    test.ok(ip.is_valid("2001:db8::ff00:42:8329"), "compressed")
+    test.ok(not ip.is_valid("2001:db8:::1"), "triple colon")
+    test.ok(not ip.is_valid("gggg::1"), "bad hex")
+    p = ip.parse("::1")
+    test.eq(p.version, 6)
+    test.eq(p.groups, [0, 0, 0, 0, 0, 0, 0, 1])
+})
+
+test.case("in_network (CIDR) for IPv4", || {
+    test.ok(ip.in_network("10.0.0.5", "10.0.0.0/24"), "in /24")
+    test.ok(not ip.in_network("10.0.1.5", "10.0.0.0/24"), "outside /24")
+    test.ok(ip.in_network("192.168.1.100", "192.168.0.0/16"), "in /16")
+    test.ok(ip.in_network("10.9.9.9", "10.0.0.0/8"), "in /8")
+})
+
+test.case("in_network for IPv6", || {
+    test.ok(ip.in_network("2001:db8::1", "2001:db8::/32"), "in /32")
+    test.ok(not ip.in_network("2001:db9::1", "2001:db8::/32"), "outside /32")
+    test.ok(not ip.in_network("10.0.0.1", "2001:db8::/32"), "cross-version is false")
+})
+
+test.case("is_private", || {
+    test.ok(ip.is_private("10.0.0.1"), "10/8")
+    test.ok(ip.is_private("172.16.5.4"), "172.16/12")
+    test.ok(ip.is_private("192.168.1.1"), "192.168/16")
+    test.ok(ip.is_private("127.0.0.1"), "loopback")
+    test.ok(not ip.is_private("8.8.8.8"), "public")
+    test.ok(ip.is_private("fe80::1"), "v6 link-local")
+    test.ok(ip.is_private("::1"), "v6 loopback")
+    test.ok(not ip.is_private("2001:db8::1"), "v6 public")
+})

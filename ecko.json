@@ -1,0 +1,10 @@
+{
+  "name": "ip",
+  "version": "0.1.0",
+  "entrypoint": "main.ecko",
+  "description": "IPv4/IPv6 address parsing, validation, CIDR membership, and private-range checks for Ecko. Pure - no capabilities.",
+  "author": "Sean Nieuwoudt <sean@underwulf.com>",
+  "license": "MIT",
+  "capabilities": [],
+  "dependencies": {}
+}

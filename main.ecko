@@ -1,0 +1,178 @@
+# ip - IPv4 / IPv6 address parsing, validation, and CIDR checks for Ecko.
+#
+#   import ip
+#
+#   ip.parse("192.168.1.5")          # { version: 4, groups: [192,168,1,5], is_private: true }
+#   ip.is_valid("::1")               # true
+#   ip.version("2001:db8::1")        # 6
+#   ip.in_network("10.0.0.5", "10.0.0.0/24")   # true
+#   ip.is_private("8.8.8.8")         # false
+#
+# Pure Ecko. An address is kept as its groups - four 8-bit octets (v4) or eight
+# 16-bit hextets (v6) - so CIDR membership compares prefix bits group-by-group,
+# sidestepping IPv6's 128-bit width (Ecko's Int is i64). No capabilities.
+
+fn drop_n(l, n) {
+    if n <= 0 { l } else if n >= len(l) { [] } else { reverse(take(reverse(l), len(l) - n)) }
+}
+
+# ---- IPv4 ------------------------------------------------------------------
+# parse_v4(s) -> [o0, o1, o2, o3] or null.
+fn parse_v4(s) {
+    parts = split(s, ".")
+    if len(parts) != 4 { return null }
+    mut octets = []
+    for p in parts {
+        n = if p == "" { -1 } else { try { int(p) } catch (e) { -1 } }
+        if n < 0 or n > 255 { return null }
+        octets = push(octets, n)
+    }
+    octets
+}
+
+# ---- IPv6 ------------------------------------------------------------------
+fn hex_digit(c) {
+    if c >= "0" and c <= "9" {
+        int(c)
+    } else if c == "a" {
+        10
+    } else if c == "b" {
+        11
+    } else if c == "c" {
+        12
+    } else if c == "d" {
+        13
+    } else if c == "e" {
+        14
+    } else if c == "f" {
+        15
+    } else {
+        -1
+    }
+}
+
+fn hex_to_int(h) {
+    mut v = 0
+    for c in chars(lower(h)) {
+        d = hex_digit(c)
+        if d < 0 { return -1 }
+        v = v * 16 + d
+    }
+    v
+}
+
+# Split one side of an IPv6 address into 16-bit groups (expanding a trailing
+# dotted-quad IPv4 into two groups). Returns null on any invalid group.
+fn split_groups_v6(part) {
+    mut out = []
+    for grp in split(part, ":") {
+        if contains(grp, ".") {
+            v4 = parse_v4(grp)
+            if v4 == null { return null }
+            out = push(out, v4[0] * 256 + v4[1])
+            out = push(out, v4[2] * 256 + v4[3])
+        } else if grp == "" or len(grp) > 4 { return null } else {
+            v = hex_to_int(grp)
+            if v < 0 { return null }
+            out = push(out, v)
+        }
+    }
+    out
+}
+
+# parse_v6(s) -> [8 hextets] or null.
+fn parse_v6(s) {
+    if contains(s, "::") {
+        halves = split(s, "::")
+        if len(halves) > 2 { return null }
+        head = if halves[0] == "" { [] } else { split_groups_v6(halves[0]) }
+        tail = if len(halves) < 2 or halves[1] == "" { [] } else { split_groups_v6(halves[1]) }
+        if head == null or tail == null { return null }
+        gap = 8 - (len(head) + len(tail))
+        if gap < 0 { return null }
+        mut groups = head
+        mut k = 0
+        while k < gap {
+            groups = push(groups, 0)
+            k = k + 1
+        }
+        for g in tail {
+            groups = push(groups, g)
+        }
+        groups
+    } else {
+        g = split_groups_v6(s)
+        if g == null or len(g) != 8 { null } else { g }
+    }
+}
+
+# ---- private-range checks --------------------------------------------------
+# 10/8, 172.16/12, 192.168/16, 127/8 (loopback), 169.254/16 (link-local).
+fn private_v4(g) = g[0] == 10 or
+    g[0] == 172 and g[1] >= 16 and g[1] <= 31 or
+    g[0] == 192 and g[1] == 168 or
+    g[0] == 127 or
+    g[0] == 169 and g[1] == 254
+
+fn all_zero_but_last(g) = g[0] == 0 and
+    g[1] == 0 and
+    g[2] == 0 and
+    g[3] == 0 and
+    g[4] == 0 and
+    g[5] == 0 and
+    g[6] == 0
+
+# ::1 (loopback), fc00::/7 (unique-local), fe80::/10 (link-local).
+fn private_v6(g) = all_zero_but_last(g) and g[7] == 1 or
+    g[0] band 65024 == 64512 or
+    g[0] band 65472 == 65152
+
+# ---- public API ------------------------------------------------------------
+# parse(s) -> { version, groups, is_private }. Raises kind-"value" if invalid.
+export fn parse(s) {
+    v4 = parse_v4(s)
+    if v4 != null { return { version: 4, groups: v4, is_private: private_v4(v4) } }
+    v6 = parse_v6(s)
+    if v6 != null { return { version: 6, groups: v6, is_private: private_v6(v6) } }
+    error({ kind: "value", message: "ip.parse: not a valid IP address: {s}" })
+}
+
+export fn is_valid(s) {
+    try {
+        parse(s)
+        true
+    } catch (e) { false }
+}
+
+export fn version(s) = parse(s).version
+
+export fn is_private(s) = parse(s).is_private
+
+# Compare the first `prefix` bits of two group lists (each group `gbits` wide).
+fn bits_match(a, b, prefix, gbits) {
+    mut remaining = prefix
+    mut i = 0
+    while remaining > 0 and i < len(a) {
+        if remaining >= gbits {
+            if a[i] != b[i] { return false }
+            remaining = remaining - gbits
+        } else {
+            shift = gbits - remaining
+            if a[i] shr shift != b[i] shr shift { return false }
+            remaining = 0
+        }
+        i = i + 1
+    }
+    true
+}
+
+# in_network(ip, cidr) -> is `ip` inside the `cidr` block (e.g. "10.0.0.0/24")?
+export fn in_network(addr, cidr) {
+    slash = split(cidr, "/")
+    net = parse(slash[0])
+    prefix = int(slash[1])
+    a = parse(addr)
+    if a.version != net.version { return false }
+    gbits = if a.version == 4 { 8 } else { 16 }
+    bits_match(a.groups, net.groups, prefix, gbits)
+}
