@@ -7,7 +7,7 @@ Pairs well with the `validate` package for input rules.
 ## Install
 
 ```bash
-ecko add https://github.com/ecko-sh/ip
+ecko get github.com/ecko-sh/ip
 ```
 
 ## Usage
