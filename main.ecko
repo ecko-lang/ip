@@ -128,7 +128,7 @@ fn private_v6(g) = all_zero_but_last(g) and g[7] == 1 or
     g[0] band 65472 == 65152
 
 # ---- public API ------------------------------------------------------------
-# parse(s) -> { version, groups, is_private }. Raises kind-"value" if invalid.
+## parse(s) -> { version, groups, is_private }. Raises kind-"value" if invalid.
 export fn parse(s) {
     v4 = parse_v4(s)
     if v4 != null { return { version: 4, groups: v4, is_private: private_v4(v4) } }
@@ -137,6 +137,12 @@ export fn parse(s) {
     error({ kind: "value", message: "ip.parse: not a valid IP address: {s}" })
 }
 
+## Whether `s` parses as an IPv4 or IPv6 address. The non-raising form of
+## `parse` - use it when a bad address is an expected input, not an error.
+##
+## example:
+##   is_valid("192.168.1.1")   # true
+##   is_valid("nope")          # false
 export fn is_valid(s) {
     try {
         parse(s)
@@ -144,8 +150,11 @@ export fn is_valid(s) {
     } catch (e) { false }
 }
 
+## 4 or 6 for an address. Raises if `s` is not an IP address.
 export fn version(s) = parse(s).version
 
+## Whether the address is in a private range - RFC 1918 and loopback for v4,
+## unique-local (fc00::/7) and loopback for v6. Raises if `s` is not an address.
 export fn is_private(s) = parse(s).is_private
 
 # Compare the first `prefix` bits of two group lists (each group `gbits` wide).
@@ -166,7 +175,7 @@ fn bits_match(a, b, prefix, gbits) {
     true
 }
 
-# in_network(ip, cidr) -> is `ip` inside the `cidr` block (e.g. "10.0.0.0/24")?
+## in_network(ip, cidr) -> is `ip` inside the `cidr` block (e.g. "10.0.0.0/24")?
 export fn in_network(addr, cidr) {
     slash = split(cidr, "/")
     net = parse(slash[0])
