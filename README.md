@@ -7,7 +7,7 @@ checks for [Ecko](https://ecko.sh), written in Ecko. Pairs well with the
 ## Install
 
 ```bash
-ecko get github.com/ecko-sh/ip
+ecko get github.com/ecko-lang/ip
 ```
 
 ## Usage
