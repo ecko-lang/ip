@@ -1,6 +1,6 @@
 {
   "module": "github.com/ecko-lang/ip",
-  "version": "0.9.5",
+  "version": "0.10.1",
   "entrypoint": "main.ecko",
   "description": "IPv4/IPv6 address parsing, validation, CIDR membership, and private-range checks for Ecko. Pure - no capabilities.",
   "author": "Sean Nieuwoudt <sean@underwulf.com>",
