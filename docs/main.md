@@ -20,9 +20,10 @@ is_valid("nope")          # false
 
 ## `is_private(s)`
 
-Whether the address is in a private range - RFC 1918 and loopback for v4,
-unique-local (fc00::/7) and loopback for v6. Raises if `s` is not an address.
+Whether the address is in a private range - RFC 1918, loopback and
+link-local (169.254/16) for v4; unique-local (fc00::/7), loopback and
+link-local (fe80::/10) for v6. Raises if `s` is not an address.
 
 ## `in_network(addr, cidr)`
 
-in_network(ip, cidr) -> is `ip` inside the `cidr` block (e.g. "10.0.0.0/24")?
+in_network(addr, cidr) -> is `addr` inside the `cidr` block (e.g. "10.0.0.0/24")?

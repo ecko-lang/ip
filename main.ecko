@@ -153,8 +153,9 @@ export fn is_valid(s) {
 ## 4 or 6 for an address. Raises if `s` is not an IP address.
 export fn version(s) = parse(s).version
 
-## Whether the address is in a private range - RFC 1918 and loopback for v4,
-## unique-local (fc00::/7) and loopback for v6. Raises if `s` is not an address.
+## Whether the address is in a private range - RFC 1918, loopback and
+## link-local (169.254/16) for v4; unique-local (fc00::/7), loopback and
+## link-local (fe80::/10) for v6. Raises if `s` is not an address.
 export fn is_private(s) = parse(s).is_private
 
 # Compare the first `prefix` bits of two group lists (each group `gbits` wide).
@@ -175,7 +176,7 @@ fn bits_match(a, b, prefix, gbits) {
     true
 }
 
-## in_network(ip, cidr) -> is `ip` inside the `cidr` block (e.g. "10.0.0.0/24")?
+## in_network(addr, cidr) -> is `addr` inside the `cidr` block (e.g. "10.0.0.0/24")?
 export fn in_network(addr, cidr) {
     slash = split(cidr, "/")
     net = parse(slash[0])
