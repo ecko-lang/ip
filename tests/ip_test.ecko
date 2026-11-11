@@ -53,3 +53,109 @@ test.case("is_private", fn() {
     test.ok(ip.is_private("::1"), "v6 loopback")
     test.ok(not ip.is_private("2001:db8::1"), "v6 public")
 })
+
+fn kind_reason(f) = try {
+    f()
+    null
+} catch (e) { "{get(e, "kind")}/{get(e, "reason")}" }
+
+test.case("IPv4 must be canonical: no leading zeros, whitespace or signs", fn() {
+    for s in [
+        "010.0.0.1",
+        "1.2.3.04",
+        "00.0.0.0",
+        " 1.2.3.4",
+        "1.2.3.4 ",
+        "+1.2.3.4",
+        "1.-2.3.4",
+        "1.2.3.4\n",
+        "1..2.3",
+        "1.2.3.4.",
+    ] {
+        test.ok(not ip.is_valid(s), "rejects '{s}'")
+    }
+    test.ok(ip.is_valid("0.0.0.0"), "zero octets are fine")
+    test.eq(ip.parse("10.0.0.1").groups, [10, 0, 0, 1])
+})
+
+test.case("IPv6 '::' must stand for at least one group", fn() {
+    test.ok(not ip.is_valid("1:2:3:4:5:6:7:8::"), "trailing :: with 8 groups")
+    test.ok(not ip.is_valid("::1:2:3:4:5:6:7:8"), "leading :: with 8 groups")
+    test.ok(not ip.is_valid("1:2:3:4::5:6:7:8"), "middle :: with 8 groups")
+    test.ok(ip.is_valid("1:2:3:4:5:6:7::"), "7 groups and ::")
+    test.ok(ip.is_valid("::"), "unspecified")
+})
+
+test.case("IPv6 rejects malformed groups and colons", fn() {
+    for s in [
+        "1:2:3:4:5:6:7",
+        "1:2:3:4:5:6:7:8:9",
+        ":1::",
+        "1::2::3",
+        "::12345",
+        "1:2:3:4:5:6:7:",
+        " ::1",
+        "::1 ",
+        "+1::",
+        "fe80::1%eth0",
+        "[::1]",
+    ] {
+        test.ok(not ip.is_valid(s), "rejects '{s}'")
+    }
+    test.ok(ip.is_valid("2001:DB8::A"), "upper-case hex")
+})
+
+test.case("an embedded IPv4 is allowed only as the last 32 bits", fn() {
+    test.ok(ip.is_valid("::ffff:1.2.3.4"), "mapped")
+    test.eq(ip.parse("::ffff:1.2.3.4").groups, [0, 0, 0, 0, 0, 65535, 258, 772])
+    test.ok(not ip.is_valid("1.2.3.4::1"), "IPv4 before ::")
+    test.ok(not ip.is_valid("::1.2.3.4:1"), "IPv4 not last")
+    test.ok(not ip.is_valid("1:2:3:4:5:6:7:1.2.3.4"), "IPv4 makes 9 groups")
+    test.ok(not ip.is_valid("::ffff:01.2.3.4"), "leading zero in embedded IPv4")
+})
+
+test.case("an IPv4-mapped IPv6 address is private when its IPv4 is", fn() {
+    test.ok(ip.is_private("::ffff:10.0.0.1"), "mapped 10/8")
+    test.ok(ip.is_private("::ffff:127.0.0.1"), "mapped loopback")
+    test.ok(not ip.is_private("::ffff:8.8.8.8"), "mapped public")
+})
+
+test.case("in_network refuses a malformed CIDR", fn() {
+    for c in [
+        "10.0.0.0/33",
+        "2001:db8::/129",
+        "10.0.0.0/-1",
+        "10.0.0.0/+8",
+        "10.0.0.0/08",
+        "1.2.3.4/32/1",
+        "10.0.0.0",
+        "10.0.0.0/",
+        "10.0.0.0/x",
+        "nope/8",
+        "10.0.0.0/ 8",
+    ] {
+        test.eq(kind_reason(fn() ip.in_network("10.0.0.1", c)), "ip/bad_cidr")
+    }
+})
+
+test.case("in_network handles /0 and full-length prefixes", fn() {
+    test.ok(ip.in_network("8.8.8.8", "0.0.0.0/0"), "/0 holds every v4 address")
+    test.ok(ip.in_network("10.0.0.1", "10.0.0.1/32"), "/32 is one address")
+    test.ok(not ip.in_network("10.0.0.2", "10.0.0.1/32"), "/32 excludes its neighbour")
+    test.ok(ip.in_network("::1", "::1/128"), "/128 is one address")
+    test.ok(ip.in_network("10.0.0.130", "10.0.0.128/25"), "a prefix inside an octet")
+    test.ok(not ip.in_network("10.0.0.127", "10.0.0.128/25"), "a prefix inside an octet, outside")
+})
+
+test.case("a bad address raises ip/bad_address everywhere", fn() {
+    test.eq(kind_reason(fn() ip.parse("nope")), "ip/bad_address")
+    test.eq(kind_reason(fn() ip.version("1.2.3")), "ip/bad_address")
+    test.eq(kind_reason(fn() ip.is_private("010.0.0.1")), "ip/bad_address")
+    test.eq(kind_reason(fn() ip.in_network("nope", "10.0.0.0/8")), "ip/bad_address")
+})
+
+test.case("a non-string argument is a bug", fn() {
+    test.eq(kind_reason(fn() ip.parse(5)), "bug/bad_argument")
+    test.eq(kind_reason(fn() ip.is_valid(null)), "bug/bad_argument")
+    test.eq(kind_reason(fn() ip.in_network("10.0.0.1", 24)), "bug/bad_argument")
+})

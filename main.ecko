@@ -1,80 +1,71 @@
 # ip - IPv4 / IPv6 address parsing, validation, and CIDR checks for Ecko.
 #
-#   import ip
-#
-#   ip.parse("192.168.1.5")          # { version: 4, groups: [192,168,1,5], is_private: true }
-#   ip.is_valid("::1")               # true
-#   ip.version("2001:db8::1")        # 6
-#   ip.in_network("10.0.0.5", "10.0.0.0/24")   # true
-#   ip.is_private("8.8.8.8")         # false
-#
 # Pure Ecko. An address is kept as its groups - four 8-bit octets (v4) or eight
 # 16-bit hextets (v6) - so CIDR membership compares prefix bits group-by-group,
-# sidestepping IPv6's 128-bit width (Ecko's Int is i64). No capabilities.
+# sidestepping IPv6's 128-bit width (Ecko's Int is i64). Parsing is strict, the
+# way Python's `ipaddress` is: no leading zeros, signs or whitespace. No
+# capabilities.
 
-fn drop_n(l, n) {
-    if n <= 0 { l } else if n >= len(l) { [] } else { reverse(take(reverse(l), len(l) - n)) }
+import std.re
+
+fn bad_address(func, s) = error(
+    {
+        kind: "ip",
+        reason: "bad_address",
+        message: "ip.{func}: \"{s}\" is not a valid IPv4 or IPv6 address",
+        address: s,
+    },
+)
+
+fn bug(message) = error({ kind: "bug", reason: "bad_argument", message: message })
+
+fn need_string(func, arg, v) {
+    unless is_string(v) { bug("ip.{func}: {arg} must be a String, got {type_of(v)}") }
 }
 
 # ---- IPv4 ------------------------------------------------------------------
+# A decimal octet with no leading zero, sign or whitespace.
+OCTET = r"^(?:0|[1-9][0-9]{0,2})$"
+
 # parse_v4(s) -> [o0, o1, o2, o3] or null.
 fn parse_v4(s) {
     parts = split(s, ".")
     if len(parts) != 4 { return null }
     mut octets = []
     for p in parts {
-        n = if p == "" { -1 } else { try { int(p) } catch (e) { -1 } }
-        if n < 0 or n > 255 { return null }
+        unless re.test(OCTET, p) { return null }
+        n = int(p)
+        if n > 255 { return null }
         octets = push(octets, n)
     }
     octets
 }
 
 # ---- IPv6 ------------------------------------------------------------------
-fn hex_digit(c) {
-    if c >= "0" and c <= "9" {
-        int(c)
-    } else if c == "a" {
-        10
-    } else if c == "b" {
-        11
-    } else if c == "c" {
-        12
-    } else if c == "d" {
-        13
-    } else if c == "e" {
-        14
-    } else if c == "f" {
-        15
-    } else {
-        -1
-    }
-}
+HEXTET = r"^[0-9A-Fa-f]{1,4}$"
 
-fn hex_to_int(h) {
-    mut v = 0
-    for c in chars(lower(h)) {
-        d = hex_digit(c)
-        if d < 0 { return -1 }
-        v = v * 16 + d
-    }
-    v
-}
+fn hex_to_int(h) = reduce(
+    chars(lower(h)),
+    fn(v, c) v * 16 + index_of(chars("0123456789abcdef"), c),
+    0,
+)
 
-# Split one side of an IPv6 address into 16-bit groups (expanding a trailing
-# dotted-quad IPv4 into two groups). Returns null on any invalid group.
-fn split_groups_v6(part) {
+# Split one side of an IPv6 address into 16-bit groups. A dotted-quad IPv4 is
+# allowed only as the last group, and only when `v4_last` says this side ends
+# the address. Returns null on any invalid group.
+fn split_groups_v6(part, v4_last) {
+    grps = split(part, ":")
     mut out = []
-    for grp in split(part, ":") {
+    for (i, grp) in enumerate(grps) {
         if contains(grp, ".") {
+            unless v4_last and i == len(grps) - 1 { return null }
             v4 = parse_v4(grp)
             if v4 == null { return null }
             out = push(out, v4[0] * 256 + v4[1])
             out = push(out, v4[2] * 256 + v4[3])
-        } else if grp == "" or len(grp) > 4 { return null } else {
-            v = hex_to_int(grp)
-            if v < 0 { return null }
-            out = push(out, v)
+        } else {
+            unless re.test(HEXTET, grp) { return null }
+            out = push(out, hex_to_int(grp))
         }
     }
     out
@@ -82,26 +73,19 @@ fn split_groups_v6(part) {
 
 # parse_v6(s) -> [8 hextets] or null.
 fn parse_v6(s) {
+    unless contains(s, ":") { return null }
     if contains(s, "::") {
         halves = split(s, "::")
-        if len(halves) > 2 { return null }
-        head = if halves[0] == "" { [] } else { split_groups_v6(halves[0]) }
-        tail = if len(halves) < 2 or halves[1] == "" { [] } else { split_groups_v6(halves[1]) }
+        if len(halves) != 2 { return null }
+        head = if halves[0] == "" { [] } else { split_groups_v6(halves[0], false) }
+        tail = if halves[1] == "" { [] } else { split_groups_v6(halves[1], true) }
         if head == null or tail == null { return null }
+        # "::" stands for one or more zero groups, never none.
         gap = 8 - (len(head) + len(tail))
-        if gap < 0 { return null }
-        mut groups = head
-        mut k = 0
-        while k < gap {
-            groups = push(groups, 0)
-            k = k + 1
-        }
-        for g in tail {
-            groups = push(groups, g)
-        }
-        groups
+        if gap < 1 { return null }
+        head + map(range(0, gap), fn(_) 0) + tail
     } else {
-        g = split_groups_v6(s)
+        g = split_groups_v6(s, true)
         if g == null or len(g) != 8 { null } else { g }
     }
 }
@@ -114,49 +98,80 @@ fn private_v4(g) = g[0] == 10 or
     g[0] == 127 or
     g[0] == 169 and g[1] == 254
 
-fn all_zero_but_last(g) = g[0] == 0 and
-    g[1] == 0 and
-    g[2] == 0 and
-    g[3] == 0 and
-    g[4] == 0 and
-    g[5] == 0 and
-    g[6] == 0
+# ::ffff:a.b.c.d carries an IPv4 address in its last 32 bits.
+fn mapped_v4(g) = if take(g, 6) == [0, 0, 0, 0, 0, 65535] {
+    [g[6] shr 8, g[6] band 255, g[7] shr 8, g[7] band 255]
+} else {
+    null
+}
 
-# ::1 (loopback), fc00::/7 (unique-local), fe80::/10 (link-local).
-fn private_v6(g) = all_zero_but_last(g) and g[7] == 1 or
-    g[0] band 65024 == 64512 or
-    g[0] band 65472 == 65152
+# ::1 (loopback), fc00::/7 (unique-local), fe80::/10 (link-local), and an
+# IPv4-mapped address whose IPv4 is private.
+fn private_v6(g) {
+    v4 = mapped_v4(g)
+    if v4 != null { return private_v4(v4) }
+    take(g, 7) == [0, 0, 0, 0, 0, 0, 0] and g[7] == 1 or
+        g[0] band 65024 == 64512 or
+        g[0] band 65472 == 65152
+}
 
-# ---- public API ------------------------------------------------------------
-## parse(s) -> { version, groups, is_private }. Raises kind-"value" if invalid.
-export fn parse(s) {
+fn parse_in(func, s) {
+    need_string(func, "address", s)
     v4 = parse_v4(s)
     if v4 != null { return { version: 4, groups: v4, is_private: private_v4(v4) } }
     v6 = parse_v6(s)
     if v6 != null { return { version: 6, groups: v6, is_private: private_v6(v6) } }
-    error({ kind: "value", message: "ip.parse: not a valid IP address: {s}" })
+    bad_address(func, s)
 }
+
+# ---- public API ------------------------------------------------------------
+## Parse an IPv4 or IPv6 address into `{ version, groups, is_private }`.
+##
+## `groups` is four octets for IPv4 and eight 16-bit hextets for IPv6, as Ints.
+## Parsing is strict: IPv4 octets may not have leading zeros (`010.0.0.1` is
+## refused, since some parsers read it as octal), and no address may carry
+## whitespace, a sign, a zone id (`%eth0`) or brackets. In IPv6, `::` stands
+## for at least one zero group, and an embedded IPv4 may only end the address.
+##
+## errors: `ip`/`bad_address` when `s` is not a valid address; `bug` when `s`
+## is not a String.
+##
+## example:
+##   ip.parse("192.168.1.5")   # {groups: [192, 168, 1, 5], is_private: true, version: 4}
+export fn parse(s) = parse_in("parse", s)
 
 ## Whether `s` parses as an IPv4 or IPv6 address. The non-raising form of
 ## `parse` - use it when a bad address is an expected input, not an error.
 ##
+## errors: `bug` when `s` is not a String.
+##
 ## example:
-##   is_valid("192.168.1.1")   # true
-##   is_valid("nope")          # false
+##   ip.is_valid("192.168.1.1")   # true
+##   ip.is_valid("010.0.0.1")     # false
 export fn is_valid(s) {
-    try {
-        parse(s)
-        true
-    } catch (e) { false }
+    need_string("is_valid", "s", s)
+    parse_v4(s) != null or parse_v6(s) != null
 }
 
-## 4 or 6 for an address. Raises if `s` is not an IP address.
-export fn version(s) = parse(s).version
+## 4 or 6 for an address.
+##
+## errors: `ip`/`bad_address` when `s` is not a valid address; `bug` when `s`
+## is not a String.
+##
+## example:
+##   ip.version("2001:db8::1")   # 6
+export fn version(s) = parse_in("version", s).version
 
-## Whether the address is in a private range - RFC 1918, loopback and
-## link-local (169.254/16) for v4; unique-local (fc00::/7), loopback and
-## link-local (fe80::/10) for v6. Raises if `s` is not an address.
-export fn is_private(s) = parse(s).is_private
+## Whether the address is in a private range: RFC 1918, loopback (127/8) and
+## link-local (169.254/16) for IPv4; unique-local (fc00::/7), loopback (::1),
+## link-local (fe80::/10) and an IPv4-mapped private address for IPv6.
+##
+## errors: `ip`/`bad_address` when `s` is not a valid address; `bug` when `s`
+## is not a String.
+##
+## example:
+##   ip.is_private("::ffff:10.0.0.1")   # true
+export fn is_private(s) = parse_in("is_private", s).is_private
 
 # Compare the first `prefix` bits of two group lists (each group `gbits` wide).
 fn bits_match(a, b, prefix, gbits) {
@@ -176,12 +191,40 @@ fn bits_match(a, b, prefix, gbits) {
     true
 }
 
-## in_network(addr, cidr) -> is `addr` inside the `cidr` block (e.g. "10.0.0.0/24")?
+fn bad_cidr(cidr, why) = error(
+    {
+        kind: "ip",
+        reason: "bad_cidr",
+        message: "ip.in_network: \"{cidr}\" is not a valid CIDR block: {why}",
+        cidr: cidr,
+    },
+)
+
+## Whether `addr` is inside the CIDR block `cidr`, such as `"10.0.0.0/24"` or
+## `"2001:db8::/32"`. An address of the other IP version is never inside.
+##
+## The prefix length is a plain decimal from 0 to 32 (IPv4) or 128 (IPv6).
+##
+## errors: `ip`/`bad_cidr` when `cidr` is not `<address>/<prefix>` with a prefix
+## in range; `ip`/`bad_address` when `addr` is not a valid address; `bug` when
+## an argument is not a String.
+##
+## example:
+##   ip.in_network("10.0.0.5", "10.0.0.0/24")   # true
 export fn in_network(addr, cidr) {
-    slash = split(cidr, "/")
-    net = parse(slash[0])
-    prefix = int(slash[1])
-    a = parse(addr)
+    need_string("in_network", "addr", addr)
+    need_string("in_network", "cidr", cidr)
+    parts = split(cidr, "/")
+    if len(parts) != 2 { bad_cidr(cidr, "expected exactly one '/'") }
+    unless is_valid(parts[0]) { bad_cidr(cidr, "\"{parts[0]}\" is not an address") }
+    unless re.test(r"^(?:0|[1-9][0-9]{0,2})$", parts[1]) {
+        bad_cidr(cidr, "the prefix must be a plain decimal number")
+    }
+    net = parse_in("in_network", parts[0])
+    prefix = int(parts[1])
+    max_bits = if net.version == 4 { 32 } else { 128 }
+    if prefix > max_bits { bad_cidr(cidr, "the prefix must be 0 to {max_bits}") }
+    a = parse_in("in_network", addr)
     if a.version != net.version { return false }
     gbits = if a.version == 4 { 8 } else { 16 }
     bits_match(a.groups, net.groups, prefix, gbits)
